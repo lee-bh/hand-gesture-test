@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaPipe 손가락 끝점 감지</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 800px;
+            width: 100%;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .video-container {
+            position: relative;
+            display: inline-block;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            background-color: #000; /* 검은 배경으로 설정 */
+        }
+        
+        #input_video {
+            width: 1024px;
+            height: 640px;
+            display: block;
+            transform: scaleX(-1); /* 좌우 반전 */
+            opacity: 0; /* 비디오 투명하게 만들기 (영역은 유지) */
+        }
+        
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1024px;
+            height: 640px;
+            pointer-events: none;
+            transform: scaleX(-1); /* 좌우 반전 */
+        }
+        
+        .controls {
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 0 10px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        
+        .info {
+            background-color: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        
+        .landmark-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .landmark-item {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .landmark-item.index-finger {
+            border-left-color: #ff6b6b;
+            background-color: #fff5f5;
+        }
+        
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        
+        .status.detected {
+            color: #28a745;
+        }
+        
+        .status.not-detected {
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤚 MediaPipe 손가락 끝점 감지</h1>
+        
+        <div class="info">
+            <h3>📋 사용법:</h3>
+            <ul>
+                <li>웹캠 권한을 허용해주세요</li>
+                <li>카메라에 손을 보여주면 손 랜드마크가 감지됩니다</li>
+                <li>검지 끝점이 빨간색 원으로 표시됩니다</li>
+                <li><strong>손바닥을 움켜쥐면 그 자리에 별이 나타납니다! ⭐</strong></li>
+                <li>주먹을 쥐면 검지 끝점이 초록색으로 변합니다</li>
+                <li>'별 지우기' 버튼으로 모든 별을 제거할 수 있습니다</li>
+            </ul>
+        </div>
+        
+        <div class="controls">
+            <button id="startButton">🎥 시작</button>
+            <button id="stopButton" disabled>⏹️ 정지</button>
+            <button id="clearStarsButton">✨ 별 지우기</button>
+        </div>
+        
+        <div class="status" id="status">카메라를 시작하려면 '시작' 버튼을 클릭하세요</div>
+        
+        <div class="video-container">
+            <video id="input_video" autoplay muted playsinline></video>
+            <canvas id="output_canvas"></canvas>
+        </div>
+        
+        <div class="landmark-info" id="landmarkInfo">
+            <!-- 손가락 랜드마크 정보가 여기에 동적으로 추가됩니다 -->
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script type="module">
+        // DOM 요소들
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusElement = document.getElementById('status');
+        const landmarkInfoElement = document.getElementById('landmarkInfo');
+
+        // MediaPipe Hands 설정
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        // 손가락 랜드마크 이름들
+        const landmarkNames = [
+            '손목', '엄지CMC', '엄지MCP', '엄지IP', '엄지끝',
+            '검지MCP', '검지PIP', '검지DIP', '검지끝',
+            '중지MCP', '중지PIP', '중지DIP', '중지끝',
+            '약지MCP', '약지PIP', '약지DIP', '약지끝',
+            '새끼손가락MCP', '새끼손가락PIP', '새끼손가락DIP', '새끼손가락끝'
+        ];
+
+        // 손가락 끝점 인덱스들 (검지 끝점은 8번)
+        const fingerTips = [4, 8, 12, 16, 20];
+        const indexFingerTip = 8; // 검지 끝점
+
+        // 손가락 관절 인덱스들
+        const fingerJoints = [3, 6, 10, 14, 18]; // 각 손가락의 PIP 관절
+
+        // 별 배열 (움켜쥔 위치들을 저장)
+        let stars = [];
+
+        // 손 연결선 정의 (MediaPipe Hands 연결선)
+        const HAND_CONNECTIONS = [
+            [0, 1], [1, 2], [2, 3], [3, 4], // 엄지
+            [0, 5], [5, 6], [6, 7], [7, 8], // 검지
+            [0, 9], [9, 10], [10, 11], [11, 12], // 중지
+            [0, 13], [13, 14], [14, 15], [15, 16], // 약지
+            [0, 17], [17, 18], [18, 19], [19, 20], // 새끼손가락
+            [5, 9], [9, 13], [13, 17] // 손가락 사이 연결
+        ];
+
+        // 결과 처리 함수
+        hands.onResults(onResults);
+
+        // 카메라 객체
+        let camera;
+
+        // 시작 버튼 클릭 이벤트
+        startButton.addEventListener('click', () => {
+            startCamera();
+        });
+
+        // 정지 버튼 클릭 이벤트
+        stopButton.addEventListener('click', () => {
+            stopCamera();
+        });
+
+        // 별 지우기 버튼 클릭 이벤트
+        const clearStarsButton = document.getElementById('clearStarsButton');
+        clearStarsButton.addEventListener('click', () => {
+            stars = [];
+            statusElement.textContent = '별이 모두 지워졌습니다!';
+            setTimeout(() => {
+                statusElement.textContent = '손을 카메라에 보여주세요...';
+            }, 2000);
+        });
+
+        // 카메라 시작 함수
+        function startCamera() {
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 1024,
+                height: 640
+            });
+            
+            camera.start();
+            
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            statusElement.textContent = '카메라가 시작되었습니다. 손을 보여주세요!';
+            statusElement.className = 'status';
+        }
+
+        // 카메라 정지 함수
+        function stopCamera() {
+            if (camera) {
+                camera.stop();
+            }
+            
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            statusElement.textContent = '카메라가 정지되었습니다.';
+            statusElement.className = 'status not-detected';
+            
+            // 캔버스와 랜드마크 정보 초기화
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            landmarkInfoElement.innerHTML = '';
+        }
+
+        // 손가락이 움켜쥐어져 있는지 확인하는 함수
+        function isFistClosed(landmarks) {
+            let closedFingers = 0;
+            
+            // 각 손가락이 움켜쥐어져 있는지 확인
+            for (let i = 0; i < fingerTips.length; i++) {
+                const tip = landmarks[fingerTips[i]];
+                const joint = landmarks[fingerJoints[i]];
+                
+                // 손가락 끝이 관절보다 아래에 있으면 움켜쥔 것으로 판단
+                if (tip.y > joint.y) {
+                    closedFingers++;
+                }
+            }
+            
+            // 4개 이상의 손가락이 움켜쥐어져 있으면 주먹으로 판단
+            return closedFingers >= 4;
+        }
+
+        // 별 그리기 함수
+        function drawStar(ctx, x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            
+            const outerRadius = size;
+            const innerRadius = size * 0.4;
+            const spikes = 5;
+            
+            ctx.beginPath();
+            for (let i = 0; i < spikes * 2; i++) {
+                const angle = (i * Math.PI) / spikes;
+                const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                const starX = x + Math.cos(angle - Math.PI / 2) * radius;
+                const starY = y + Math.sin(angle - Math.PI / 2) * radius;
+                
+                if (i === 0) {
+                    ctx.moveTo(starX, starY);
+                } else {
+                    ctx.lineTo(starX, starY);
+                }
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+
+        // 결과 처리 함수
+        function onResults(results) {
+            // 캔버스 초기화
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            // 기존 별들 그리기
+            stars.forEach(star => {
+                drawStar(canvasCtx, star.x, star.y, 15, '#FFD700');
+            });
+            
+            // 랜드마크 정보 초기화
+            landmarkInfoElement.innerHTML = '';
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                statusElement.textContent = `손이 감지되었습니다! (${results.multiHandLandmarks.length}개)`;
+                statusElement.className = 'status detected';
+
+                results.multiHandLandmarks.forEach((handLandmarks, handIndex) => {
+                    const handedness = results.multiHandedness[handIndex];
+                    
+                    // 손가락이 움켜쥐어져 있는지 확인
+                    const isFist = isFistClosed(handLandmarks);
+                    
+                    if (isFist) {
+                        // 주먹을 쥐면 검지 끝점 위치에 별 생성
+                        const indexTip = handLandmarks[indexFingerTip];
+                        const starX = indexTip.x * canvasElement.width;
+                        const starY = indexTip.y * canvasElement.height;
+                        
+                        // 중복된 위치에 별이 있는지 확인
+                        const isDuplicate = stars.some(star => 
+                            Math.abs(star.x - starX) < 30 && Math.abs(star.y - starY) < 30
+                        );
+                        
+                        if (!isDuplicate) {
+                            stars.push({
+                                x: starX,
+                                y: starY,
+                                timestamp: Date.now()
+                            });
+                        }
+                    }
+                    
+                    // 검지 끝점만 20px 빨간 원으로 표시
+                    const indexTip = handLandmarks[indexFingerTip];
+                    canvasCtx.fillStyle = isFist ? '#00FF00' : '#FF0000'; // 주먹이면 초록색, 아니면 빨간색
+                    canvasCtx.strokeStyle = isFist ? '#00FF00' : '#FF0000';
+                    canvasCtx.lineWidth = 2;
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(
+                        indexTip.x * canvasElement.width,
+                        indexTip.y * canvasElement.height,
+                        5, // 10px 지름이므로 반지름 5px
+                        0, 2 * Math.PI
+                    );
+                    canvasCtx.fill();
+
+                    // 랜드마크 정보 표시 (검지 끝점만)
+                    displayIndexFingerInfo(indexTip, handedness, handIndex, isFist);
+                });
+            } else {
+                statusElement.textContent = '손을 카메라에 보여주세요...';
+                statusElement.className = 'status not-detected';
+            }
+            
+            canvasCtx.restore();
+        }
+
+        // 검지 끝점 정보만 표시하는 함수
+        function displayIndexFingerInfo(indexTip, handedness, handIndex, isFist) {
+            const handTitle = document.createElement('h3');
+            const fistStatus = isFist ? ' (주먹 쥠 ✊)' : ' (손 펼침 ✋)';
+            handTitle.textContent = `손 ${handIndex + 1} (${handedness.label === 'Right' ? '오른손' : '왼손'}) - 검지 끝점${fistStatus}`;
+            landmarkInfoElement.appendChild(handTitle);
+
+            const landmarkItem = document.createElement('div');
+            landmarkItem.className = 'landmark-item index-finger';
+
+            const x = indexTip.x.toFixed(3);
+            const y = indexTip.y.toFixed(3);
+            const z = indexTip.z.toFixed(3);
+
+            landmarkItem.innerHTML = `
+                <strong>검지 끝점</strong><br>
+                X: ${x}<br>
+                Y: ${y}<br>
+                Z: ${z}<br>
+                상태: ${isFist ? '주먹 쥠' : '손 펼침'}<br>
+                별 개수: ${stars.length}개
+            `;
+
+            landmarkInfoElement.appendChild(landmarkItem);
+        }
+
+        // 연결선 그리기 함수
+        function drawConnectors(ctx, landmarks, connections, style = {}) {
+            ctx.strokeStyle = style.color || '#00FF00';
+            ctx.lineWidth = style.lineWidth || 2;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            connections.forEach(([startIdx, endIdx]) => {
+                const start = landmarks[startIdx];
+                const end = landmarks[endIdx];
+                
+                ctx.beginPath();
+                ctx.moveTo(
+                    start.x * canvasElement.width,
+                    start.y * canvasElement.height
+                );
+                ctx.lineTo(
+                    end.x * canvasElement.width,
+                    end.y * canvasElement.height
+                );
+                ctx.stroke();
+            });
+        }
+
+        // 랜드마크 그리기 함수
+        function drawLandmarks(ctx, landmarks, style = {}) {
+            ctx.fillStyle = style.color || '#FF0000';
+            ctx.strokeStyle = style.color || '#FF0000';
+            ctx.lineWidth = style.lineWidth || 1;
+
+            landmarks.forEach((landmark) => {
+                const x = landmark.x * canvasElement.width;
+                const y = landmark.y * canvasElement.height;
+                const radius = style.radius || 3;
+
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+            });
+        }
+    </script>
+</body>
+</html>
